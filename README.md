@@ -34,8 +34,11 @@ Then:
   Cameras, lights and empties are hit near their origin.
 - Or select objects as usual and use **Object ▸ Ask Tencil** or the right-click menu.
 
-Pins show up as numbers on the objects and in the sidebar, with the agent's replies,
-Reply / Stop / Resolve / Open in agent / Delete.
+Pins show up as numbers on the objects. The **Tencil** button in the 3D view's header
+(or **Alt+Shift+T**) opens the Tencil panel: every thread in the project, what's working on
+top; open one for the whole conversation, the agent's steps, and Reply / Stop / Resolve /
+Show / Open in agent / Delete. While the agent works, its current step also shows next to
+the pin, in the status bar, and in the sidebar's Tencil tab.
 
 ## How it works
 

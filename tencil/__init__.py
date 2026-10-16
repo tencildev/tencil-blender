@@ -6,7 +6,7 @@ from __future__ import annotations
 import bpy
 from bpy.app.handlers import persistent
 
-from . import markers, picker, ui
+from . import markers, panel, picker, ui
 from .state import DEFAULT_PORT, session
 
 TICK_SECONDS = 0.2
@@ -58,7 +58,7 @@ def _start() -> None:
     session.start(_port())
 
 
-classes = (TencilPreferences, picker.TENCIL_OT_pick, *ui.classes)
+classes = (TencilPreferences, picker.TENCIL_OT_pick, *ui.classes, *panel.classes)
 
 
 def register() -> None:
@@ -67,15 +67,21 @@ def register() -> None:
     bpy.types.WindowManager.tencil_show_resolved = bpy.props.BoolProperty(
         name="Show resolved pins", default=False
     )
+    bpy.types.WindowManager.tencil_open_thread = bpy.props.StringProperty(name="Open thread")
     bpy.types.VIEW3D_MT_object_context_menu.append(ui.menu_entry)
     bpy.types.VIEW3D_MT_object.append(ui.menu_entry)
     bpy.types.STATUSBAR_HT_header.append(ui.draw_statusbar)
+    bpy.types.VIEW3D_HT_header.append(panel.draw_header_button)
     markers.register()
 
     keyconfig = bpy.context.window_manager.keyconfigs.addon
     if keyconfig:
         keymap = keyconfig.keymaps.new(name="3D View", space_type="VIEW_3D")
         item = keymap.keymap_items.new("tencil.pick", "T", "PRESS", alt=True)
+        _keymaps.append((keymap, item))
+        item = keymap.keymap_items.new("wm.call_panel", "T", "PRESS", alt=True, shift=True)
+        item.properties.name = "TENCIL_PT_window"
+        item.properties.keep_open = True
         _keymaps.append((keymap, item))
 
     bpy.app.handlers.load_post.append(_on_file_change)
@@ -97,9 +103,11 @@ def unregister() -> None:
         keymap.keymap_items.remove(item)
     _keymaps.clear()
     markers.unregister()
+    bpy.types.VIEW3D_HT_header.remove(panel.draw_header_button)
     bpy.types.STATUSBAR_HT_header.remove(ui.draw_statusbar)
     bpy.types.VIEW3D_MT_object.remove(ui.menu_entry)
     bpy.types.VIEW3D_MT_object_context_menu.remove(ui.menu_entry)
     del bpy.types.WindowManager.tencil_show_resolved
+    del bpy.types.WindowManager.tencil_open_thread
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)
