@@ -41,6 +41,10 @@ def _tick() -> float:
             for area in window.screen.areas:
                 if area.type == "VIEW_3D":
                     area.tag_redraw()
+            # The status bar is a global area, outside screen.areas. Clearing the status
+            # text redraws it, but a running modal tool keeps its hints there, so not then.
+            if not window.modal_operators:
+                window.workspace.status_text_set_internal(None)
     return TICK_SECONDS
 
 
@@ -65,6 +69,7 @@ def register() -> None:
     )
     bpy.types.VIEW3D_MT_object_context_menu.append(ui.menu_entry)
     bpy.types.VIEW3D_MT_object.append(ui.menu_entry)
+    bpy.types.STATUSBAR_HT_header.append(ui.draw_statusbar)
     markers.register()
 
     keyconfig = bpy.context.window_manager.keyconfigs.addon
@@ -92,6 +97,7 @@ def unregister() -> None:
         keymap.keymap_items.remove(item)
     _keymaps.clear()
     markers.unregister()
+    bpy.types.STATUSBAR_HT_header.remove(ui.draw_statusbar)
     bpy.types.VIEW3D_MT_object.remove(ui.menu_entry)
     bpy.types.VIEW3D_MT_object_context_menu.remove(ui.menu_entry)
     del bpy.types.WindowManager.tencil_show_resolved

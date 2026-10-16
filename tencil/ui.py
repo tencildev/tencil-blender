@@ -11,6 +11,7 @@ import bpy
 from mathutils import Vector
 
 from . import context as tencil_context
+from . import state
 from .state import session
 
 # What the ask dialog is about, from opening it until Send.
@@ -271,16 +272,161 @@ class TENCIL_PT_panel(bpy.types.Panel):
 
         _draw_setup(layout)
 
+
+class TENCIL_PT_working(bpy.types.Panel):
+    """What the agent is doing right now, step by step"""
+
+    bl_space_type = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category = "Tencil"
+    bl_label = "Working On"
+    bl_parent_id = "TENCIL_PT_panel"
+
+    def draw_header(self, context: bpy.types.Context) -> None:
+        active = session.active_threads()
+        self.layout.label(text="", icon="SORTTIME" if active else "CHECKMARK")
+
+    def draw(self, context: bpy.types.Context) -> None:
+        layout = self.layout
+        active = session.active_threads()
+        if not active:
+            layout.label(text="Nothing right now")
+            return
+        width = _text_width(context)
+        for thread in active:
+            _draw_activity(layout, thread, width)
+
+
+class TENCIL_PT_pins(bpy.types.Panel):
+    bl_space_type = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category = "Tencil"
+    bl_label = "Pins"
+    bl_parent_id = "TENCIL_PT_panel"
+
+    def draw_header(self, context: bpy.types.Context) -> None:
+        count = len(session.file_threads())
+        if count:
+            self.layout.label(text=str(count))
+
+    def draw(self, context: bpy.types.Context) -> None:
+        layout = self.layout
         numbered = session.numbered()
         wm = context.window_manager
         visible = [(n, t) for n, t in numbered if wm.tencil_show_resolved or not t.get("resolved")]
-        header = layout.row()
-        header.label(text=f"Pins ({len(visible)})" if numbered else "No pins yet")
+        if not numbered:
+            layout.label(text="No pins in this file yet")
+            return
         if any(t.get("resolved") for _, t in numbered):
-            header.prop(wm, "tencil_show_resolved", text="Resolved", toggle=True)
-        width = max(int(context.region.width / (6.5 * context.preferences.system.ui_scale)) - 6, 20)
+            layout.prop(wm, "tencil_show_resolved", text="Show Resolved", toggle=True)
+        width = _text_width(context)
         for number, thread in reversed(visible):
             _draw_thread(layout, number, thread, width)
+
+
+STEP_ICONS = {"running": "PLAY", "done": "CHECKMARK", "failed": "ERROR", "skipped": "PANEL_CLOSE"}
+MAX_STEPS_SHOWN = 6
+
+
+def _draw_activity(layout: bpy.types.UILayout, thread: dict[str, Any], width: int) -> None:
+    """One thread the agent is on: what it's doing, the last steps, and what it's saying."""
+    box = layout.box()
+    status = thread.get("status", "working")
+    number = session.number_of(thread["id"])
+    head = box.row()
+    title = thread.get("title", "")
+    head.label(text=f"{number}  {title}" if number else title, icon=STATUS_ICONS.get(status, "SORTTIME"))
+    if number:
+        head.operator("tencil.focus", text="", icon="RESTRICT_SELECT_OFF", emboss=False).thread_id = thread["id"]
+
+    meta = box.row()
+    meta.scale_y = 0.7
+    file = state.file_label(thread)
+    since = state.elapsed(state.turn_started(thread))
+    where = "" if number or not file else f" · {file}"
+    meta.label(
+        text={"starting": "Starting", "waiting": "Waiting for you"}.get(status, "Working") + (f" · {since}" if since else "") + where
+    )
+    if status == "waiting" or thread.get("statusDetail"):
+        for line in _wrap(thread.get("statusDetail") or "Needs your input in the agent's app", width)[:3]:
+            box.label(text=line, icon="INFO" if status != "waiting" else "QUESTION")
+
+    steps = thread.get("steps") or []
+    if steps:
+        column = box.column(align=True)
+        children: dict[str, list[dict[str, Any]]] = {}
+        for step in steps:
+            if step.get("parentId"):
+                children.setdefault(step["parentId"], []).append(step)
+        top = [s for s in steps if not s.get("parentId")]
+        hidden = max(len(top) - MAX_STEPS_SHOWN, 0)
+        if hidden:
+            column.label(text=f"{hidden} earlier step{'s' if hidden != 1 else ''}")
+        for step in top[-MAX_STEPS_SHOWN:]:
+            _draw_step(column, step, width, 0)
+            # A subagent's steps show while it runs.
+            if step.get("status") == "running":
+                for child in children.get(step["id"], [])[-3:]:
+                    _draw_step(column, child, width, 1)
+    elif status in ("starting", "working"):
+        box.label(text="Thinking…")
+
+    reply = next((m for m in reversed(thread.get("messages", [])) if m.get("role") == "assistant"), None)
+    turn = state.turn_started(thread) or ""
+    if reply and reply.get("text") and (reply.get("streaming") or reply.get("createdAt", "") >= turn):
+        lines = _wrap(reply["text"].strip(), width)
+        text = box.column(align=True)
+        text.scale_y = 0.8
+        for line in lines[-4:]:
+            text.label(text=line)
+
+    actions = box.row(align=True)
+    stop = actions.operator("tencil.thread_action", text="Stop", icon="CANCEL")
+    stop.thread_id, stop.action = thread["id"], "STOP"
+    url = (thread.get("provider") or {}).get("url")
+    if url:
+        actions.operator("tencil.open", text="Open", icon="URL").url = url
+
+
+def _draw_step(layout: bpy.types.UILayout, step: dict[str, Any], width: int, depth: int) -> None:
+    row = layout.row(align=True)
+    if depth:
+        row.separator(factor=2.0 * depth)
+    label = step.get("label", "")
+    detail = step.get("detail")
+    room = width - 4 - 3 * depth
+    text = f"{label}: {detail}" if detail else label
+    row.label(text=text if len(text) <= room else text[: max(room - 1, 8)] + "…", icon=STEP_ICONS.get(step.get("status"), "DOT"))
+
+
+def _text_width(context: bpy.types.Context) -> int:
+    """Characters that fit on a sidebar line, roughly."""
+    return max(int(context.region.width / (6.5 * context.preferences.system.ui_scale)) - 6, 20)
+
+
+def _wrap(text: str, width: int) -> list[str]:
+    lines: list[str] = []
+    for paragraph in text.splitlines():
+        lines.extend(textwrap.wrap(paragraph, width) or [""])
+    return lines
+
+
+def draw_statusbar(self: Any, context: bpy.types.Context) -> None:
+    """Tencil in Blender's status bar while the agent works, so it's visible from any tab."""
+    active = session.active_threads()
+    if not session.ready or not active:
+        return
+    thread = active[-1]
+    step = state.current_step(thread) if thread.get("status") == "working" else None
+    if thread.get("status") == "waiting":
+        text, icon = "Tencil is waiting for you", "QUESTION"
+    else:
+        what = step.get("label") if step and step.get("status") == "running" else "working"
+        text, icon = f"Tencil: {what}", "SORTTIME"
+    if len(active) > 1:
+        text += f" (+{len(active) - 1})"
+    since = state.elapsed(state.turn_started(thread))
+    self.layout.label(text=f"{text} · {since}" if since else text, icon=icon)
 
 
 def _draw_status(layout: bpy.types.UILayout) -> None:
@@ -347,16 +493,15 @@ def _draw_thread(layout: bpy.types.UILayout, number: int, thread: dict[str, Any]
     body.scale_y = 0.8
     detail = thread.get("statusDetail")
     if status in ("starting", "working"):
-        body.label(text=detail or "Working…")
+        step = state.current_step(thread)
+        body.label(text=(step or {}).get("label") or detail or "Working…", icon="SORTTIME")
     elif status == "error":
         body.label(text=detail or "Failed", icon="ERROR")
     elif status == "waiting":
         body.label(text=detail or "Needs your input in the agent's app")
     reply = next((m for m in reversed(thread.get("messages", [])) if m.get("role") == "assistant"), None)
-    if reply and reply.get("text"):
-        lines = []
-        for paragraph in reply["text"].strip().splitlines():
-            lines.extend(textwrap.wrap(paragraph, width) or [""])
+    if reply and reply.get("text") and status not in ("starting", "working"):
+        lines = _wrap(reply["text"].strip(), width)
         for line in lines[:8]:
             body.label(text=line)
         if len(lines) > 8:
@@ -420,4 +565,6 @@ classes = (
     TENCIL_OT_reconnect,
     TENCIL_OT_setup_mcp,
     TENCIL_PT_panel,
+    TENCIL_PT_working,
+    TENCIL_PT_pins,
 )

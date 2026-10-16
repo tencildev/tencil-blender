@@ -6,15 +6,18 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import time
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, unquote
 
 import bpy
 
 from .client import PROTOCOL_VERSION, Client
+
+ACTIVE = ("starting", "working", "waiting")
 
 HOST = "localhost"
 # Like Tencil's Vite plugin, TENCIL_PORT points at a daemon on another port.
@@ -41,6 +44,8 @@ class Session:
         self.root: str | None = None
         # One project.select per connection, so a daemon that disagrees can't make us loop.
         self._selected_root = False
+        # While the agent works, the pulse and elapsed times move even when no message arrives.
+        self._last_live_redraw = 0.0
 
     # ------------------------------------------------------------------ lifecycle
 
@@ -96,6 +101,11 @@ class Session:
         messages = self.client.poll()
         for message in messages:
             self._handle(message)
+        now = time.monotonic()
+        # 4 a second keeps the pin's pulse moving without busying Blender.
+        if self.active_threads() and now - self._last_live_redraw >= 0.25:
+            self._last_live_redraw = now
+            return True
         return bool(messages)
 
     def _handle(self, message: dict[str, Any]) -> None:
@@ -184,6 +194,34 @@ class Session:
     def numbered(self) -> list[tuple[int, dict[str, Any]]]:
         return list(enumerate(self.file_threads(include_resolved=True), start=1))
 
+    def number_of(self, thread_id: str) -> int | None:
+        return next((n for n, t in self.numbered() if t["id"] == thread_id), None)
+
+    def active_threads(self) -> list[dict[str, Any]]:
+        """What the agent is on right now, in this project (any file), oldest first."""
+        threads = [t for t in self.threads.values() if t.get("status") in ACTIVE]
+        threads.sort(key=lambda t: t.get("createdAt", ""))
+        return threads
+
+
+def current_step(thread: dict[str, Any]) -> dict[str, Any] | None:
+    """The step the agent is running now (the innermost), else the last one."""
+    steps = thread.get("steps") or []
+    running = [s for s in steps if s.get("status") == "running"]
+    return (running or steps or [None])[-1]
+
+
+def turn_started(thread: dict[str, Any]) -> str | None:
+    """When the current turn began: the last thing the user sent."""
+    user = [m for m in thread.get("messages", []) if m.get("role") == "user"]
+    return user[-1].get("createdAt") if user else thread.get("createdAt")
+
+
+def file_label(thread: dict[str, Any]) -> str:
+    """The file a pin was made from, as `scenes/x.blend`."""
+    url = thread.get("pageUrl") or ""
+    return unquote(url.split(".blender.invalid/", 1)[-1]) if ".blender.invalid/" in url else ""
+
 
 def page_url_for(blend_path: str, root: str | None) -> str:
     """The address the daemon knows this file by.
@@ -215,12 +253,27 @@ def _norm(path: str | None) -> str | None:
     return os.path.realpath(path) if path else None
 
 
-def relative_time(iso: str) -> str:
-    try:
-        then = datetime.fromisoformat(iso.replace("Z", "+00:00"))
-    except ValueError:
+def elapsed(iso: str | None) -> str:
+    """`42s`, `3m 05s`: how long the agent has been at it."""
+    seconds = _seconds_since(iso)
+    if seconds is None:
         return ""
-    seconds = (datetime.now(then.tzinfo) - then).total_seconds()
+    seconds = max(int(seconds), 0)
+    return f"{seconds}s" if seconds < 60 else f"{seconds // 60}m {seconds % 60:02d}s"
+
+
+def _seconds_since(iso: str | None) -> float | None:
+    try:
+        then = datetime.fromisoformat((iso or "").replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return (datetime.now(then.tzinfo or timezone.utc) - then).total_seconds()
+
+
+def relative_time(iso: str) -> str:
+    seconds = _seconds_since(iso)
+    if seconds is None:
+        return ""
     if seconds < 60:
         return "just now"
     if seconds < 3600:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import time
 
 import blf
 import bpy
@@ -12,7 +13,7 @@ from gpu_extras.batch import batch_for_shader
 from mathutils import Vector
 
 from .context import object_from_path
-from .state import session
+from .state import ACTIVE, current_step, session
 
 COLORS = {
     "draft": (0.55, 0.55, 0.6, 1.0),
@@ -52,8 +53,13 @@ def draw() -> None:
             continue
         # Offset up-right so the pin points at the spot instead of covering it.
         center = screen + Vector((radius * 0.8, radius * 0.8))
+        status = thread.get("status", "idle")
+        if status in ("starting", "working"):
+            # A slow pulse while the agent works on it.
+            pulse = 0.5 + 0.5 * math.sin(time.monotonic() * 4)
+            _circle(center, radius + (3 + 3 * pulse) * scale, (*COLORS["working"][:3], 0.25 + 0.2 * pulse))
         _circle(center, radius + 1.5 * scale, (1, 1, 1, 0.95))
-        _circle(center, radius, COLORS.get(thread.get("status", "idle"), COLORS["idle"]))
+        _circle(center, radius, COLORS.get(status, COLORS["idle"]))
         font = 0
         blf.size(font, 11 * scale)
         label = str(number)
@@ -61,6 +67,38 @@ def draw() -> None:
         blf.color(font, 1, 1, 1, 1)
         blf.position(font, center.x - width / 2, center.y - height / 2, 0)
         blf.draw(font, label)
+        if status in ACTIVE:
+            _activity_label(thread, center, radius, scale)
+
+
+def _activity_label(thread: dict, center: Vector, radius: float, scale: float) -> None:
+    """What the agent is doing, next to its pin."""
+    if thread.get("status") == "waiting":
+        text = "Waiting for you"
+    else:
+        step = current_step(thread)
+        text = step["label"] if step and step.get("status") == "running" else "Working…"
+    if len(text) > 40:
+        text = text[:39] + "…"
+    font = 0
+    blf.size(font, 11 * scale)
+    width, height = blf.dimensions(font, text)
+    x, y = center.x + radius + 6 * scale, center.y - height / 2
+    pad = 5 * scale
+    _rect(x - pad, y - pad, width + 2 * pad, height + 2 * pad, (0.1, 0.1, 0.12, 0.85))
+    blf.color(font, 1, 1, 1, 0.95)
+    blf.position(font, x, y, 0)
+    blf.draw(font, text)
+
+
+def _rect(x: float, y: float, width: float, height: float, color: tuple[float, float, float, float]) -> None:
+    shader = gpu.shader.from_builtin("UNIFORM_COLOR")
+    vertices = ((x, y), (x + width, y), (x + width, y + height), (x, y + height))
+    batch = batch_for_shader(shader, "TRIS", {"pos": vertices}, indices=((0, 1, 2), (0, 2, 3)))
+    shader.uniform_float("color", color)
+    gpu.state.blend_set("ALPHA")
+    batch.draw(shader)
+    gpu.state.blend_set("NONE")
 
 
 def _circle(center: Vector, radius: float, color: tuple[float, float, float, float]) -> None:
