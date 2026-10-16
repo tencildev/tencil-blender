@@ -82,6 +82,7 @@ class TENCIL_OT_ask(bpy.types.Operator):
     def execute(self, context: bpy.types.Context) -> set[str]:
         prompt = self.prompt.strip()
         if not prompt:
+            self.report({"WARNING"}, "Type what should change")
             return {"CANCELLED"}
         objects = [bpy.data.objects[n] for n in _capture.get("objects", []) if n in bpy.data.objects]
         if not objects:
@@ -264,6 +265,7 @@ class TENCIL_PT_panel(bpy.types.Panel):
         column = layout.column(align=True)
         column.scale_y = 1.3
         column.enabled = session.ready
+        column.operator_context = "INVOKE_DEFAULT"
         column.operator("tencil.pick", icon="EYEDROPPER")
         column.operator("tencil.ask", text="Ask About Selection", icon="OUTLINER_OB_MESH")
 
@@ -401,9 +403,12 @@ def _find_view3d(context: bpy.types.Context) -> bpy.types.Area | None:
 
 
 def menu_entry(self: Any, context: bpy.types.Context) -> None:
-    self.layout.separator()
-    self.layout.operator("tencil.ask", icon="OUTLINER_OB_MESH")
-    self.layout.operator("tencil.pick", icon="EYEDROPPER")
+    layout = self.layout
+    layout.separator()
+    # The object menus end in EXEC_REGION_WIN, which would skip the dialog (and the picker).
+    layout.operator_context = "INVOKE_REGION_WIN"
+    layout.operator("tencil.ask", icon="OUTLINER_OB_MESH")
+    layout.operator("tencil.pick", icon="EYEDROPPER")
 
 
 classes = (
