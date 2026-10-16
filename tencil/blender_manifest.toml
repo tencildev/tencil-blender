@@ -15,4 +15,4 @@ license = ["SPDX:Apache-2.0"]
 
 [permissions]
 network = "Talks to the Tencil daemon on this machine"
-files = "Saves viewport screenshots to a temporary file and writes .mcp.json when asked"
+files = "Viewport screenshots and the project's .mcp.json"
