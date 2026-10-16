@@ -19,8 +19,11 @@ Blender ── Tencil add-on ──ws──▶ tencil daemon ──▶ agent (T3
    drag it into Blender, or for development symlink `tencil/` into
    `~/Library/Application Support/Blender/<version>/extensions/user_default/`.
 3. Install Blender Lab's **MCP Server** add-on (Blender 5.1+) from the
-   `https://lab.blender.org/` extensions repository and start its server.
-4. Save your `.blend` inside the project folder (a git repo, or any folder), open the
+   `https://lab.blender.org/` extensions repository, turn on its Auto Start, and turn on
+   **Preferences ▸ System ▸ Allow Online Access** (without it the add-on won't open its
+   local socket).
+4. Use an agent that reads `.mcp.json`: Claude Code (Tencil's own provider, or Claude in
+   T3 Code); Codex doesn't. Save your `.blend` inside the project folder (a git repo, or any folder), open the
    **Tencil** tab in the 3D view's sidebar (N) and click **Add Blender MCP to .mcp.json**,
    so the agent gets the Blender tools (needs [uv](https://docs.astral.sh/uv/)).
 
@@ -38,8 +41,10 @@ Reply / Stop / Resolve / Open in agent / Delete.
 
 - `ws.py` is a standard-library WebSocket client (extensions can't pip-install);
   `client.py` runs it on a thread and a Blender timer hands messages to the main thread.
-- The page URL is `blender://` plus the file's path, and the project is the git repository
-  the file is in (or its folder); the add-on sends `project.select` with it. An unsaved
+- The project is the git repository the file is in (or its folder). The daemon knows
+  the file as `ws://<project>-<hash>.blender.invalid/<path>`: a made-up origin per project,
+  because it remembers projects per origin and `blender://` or `file://` URLs all share
+  one ("null"). The first time, the daemon asks and the add-on answers with the folder. An unsaved
   file says `hello { scratch: true }` and the agent works in Tencil's scratch folder.
 - Tencil's wire format describes DOM elements, so the object goes into those fields
   (`context.py`): the data path (`bpy.data.objects["Cube"]`) as the selector, and a
@@ -51,8 +56,7 @@ Reply / Stop / Resolve / Open in agent / Delete.
 - The daemon's prompt still opens with "an element of their running app… locate the
   code"; the description corrects it. A generic, app-described context kind in Tencil's
   protocol would fix it.
-- The daemon remembers projects per page origin, and every `blender://` URL has the
-  same one, so the add-on corrects the project on every connect.
+- That made-up page address shows up in the agent's prompt as the "Page".
 - Pins only know their object by name: renaming the object detaches the pin.
 - Where on the object a pin was clicked lives in memory; after a restart pins sit on
   top of their object.

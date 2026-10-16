@@ -77,7 +77,8 @@ def register() -> None:
     bpy.app.handlers.save_post.append(_on_file_change)
     bpy.app.timers.register(_tick, first_interval=TICK_SECONDS, persistent=True)
     # Preferences aren't readable while registering at startup; connect on the first tick.
-    bpy.app.timers.register(_start, first_interval=0.1)
+    # Persistent, or opening a file from the command line drops it before it runs.
+    bpy.app.timers.register(_start, first_interval=0.1, persistent=True)
 
 
 def unregister() -> None:

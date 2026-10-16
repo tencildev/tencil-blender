@@ -3,11 +3,14 @@ this file belongs to, and the pins (threads) made from it."""
 
 from __future__ import annotations
 
+import hashlib
 import os
+import re
 import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import bpy
 
@@ -34,7 +37,7 @@ class Session:
         # Objects the picker handed to the ask dialog, by name; otherwise it uses the selection.
         self.pending: list[str] = []
         # Read on the client thread when it says hello, so they're kept here, not read from bpy there.
-        self.page_url = "blender://untitled"
+        self.page_url = page_url_for("", None)
         self.root: str | None = None
         # One project.select per connection, so a daemon that disagrees can't make us loop.
         self._selected_root = False
@@ -60,8 +63,8 @@ class Session:
     def refresh_file(self) -> bool:
         """Pick up the open file's path; True when it changed (the connection must say hello again)."""
         path = bpy.data.filepath
-        page_url = Path(path).resolve().as_uri().replace("file:", "blender:", 1) if path else "blender://untitled"
         root = project_root(path) if path else None
+        page_url = page_url_for(path, root)
         changed = page_url != self.page_url or root != self.root
         self.page_url, self.root = page_url, root
         return changed
@@ -106,8 +109,7 @@ class Session:
                 self._selected_root = False
         elif kind == "ready":
             project = message.get("project") or {}
-            # The daemon resolves pages by origin, and every blender:// URL has the same ("null").
-            # It may hand back another file's project; correct it once with the folder we know.
+            # The daemon may remember another folder for this address; the file's own folder wins.
             if self.root and _norm(project.get("root")) != _norm(self.root) and not self._selected_root:
                 self._select_root()
                 return
@@ -119,7 +121,7 @@ class Session:
             if self.root and not self._selected_root:
                 self._select_root()
             else:
-                self.last_error = "Tencil doesn't know which project this file belongs to"
+                self.last_error = "Save the file to connect it to a project"
         elif kind == "provider.status":
             self.provider = message.get("provider")
         elif kind == "thread.upsert":
@@ -181,6 +183,23 @@ class Session:
 
     def numbered(self) -> list[tuple[int, dict[str, Any]]]:
         return list(enumerate(self.file_threads(include_resolved=True), start=1))
+
+
+def page_url_for(blend_path: str, root: str | None) -> str:
+    """The address the daemon knows this file by.
+
+    The daemon remembers a project per origin. blender:// and file:// URLs all have the
+    same origin, "null", so one remembered folder would go to every file (and to local
+    web pages). A made-up host per project keeps them apart. ws:// rather than http://,
+    so the daemon doesn't look for a dev server on port 80: the first time it asks
+    (project.unknown) and the add-on answers with the folder, which it then remembers.
+    """
+    if not blend_path or not root:
+        return "ws://untitled.blender.invalid/"
+    digest = hashlib.sha1(os.path.realpath(root).encode("utf-8")).hexdigest()[:10]
+    name = re.sub(r"[^a-z0-9]+", "-", Path(root).name.lower()).strip("-")[:40] or "project"
+    relative = Path(os.path.relpath(os.path.realpath(blend_path), os.path.realpath(root))).as_posix()
+    return f"ws://{name}-{digest}.blender.invalid/{quote(relative)}"
 
 
 def project_root(blend_path: str) -> str:

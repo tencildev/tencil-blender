@@ -315,7 +315,8 @@ def _draw_status(layout: bpy.types.UILayout) -> None:
 
 def _draw_setup(layout: bpy.types.UILayout) -> None:
     """What the agent needs to change the scene: Blender Lab's MCP add-on, and the server in .mcp.json."""
-    has_addon = any("blender_mcp" in name for name in bpy.context.preferences.addons.keys())
+    # Installed from the Blender Lab repository it's `bl_ext.blender_lab.mcp`.
+    has_addon = any(name.rsplit(".", 1)[-1] in ("mcp", "blender_mcp") for name in bpy.context.preferences.addons.keys())
     has_config = bool(session.root) and _mcp_configured(session.root)
     if has_addon and has_config:
         return

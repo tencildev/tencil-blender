@@ -31,7 +31,8 @@ tencil.register()
 try:
     expected_root = os.path.realpath(os.environ["EXPECTED_ROOT"])
     session.start(int(os.environ["TENCIL_PORT"]))
-    assert session.page_url.startswith("blender:///"), session.page_url
+    assert session.page_url.startswith("ws://scene-project-"), session.page_url
+    assert session.page_url.endswith(".blender.invalid/scenes/cube.blend"), session.page_url
     assert os.path.realpath(session.root) == expected_root, (session.root, expected_root)
 
     wait(lambda: session.ready, "ready")
