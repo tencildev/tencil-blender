@@ -13,7 +13,7 @@ from mathutils import Vector
 from . import context as tencil_context
 from .state import session
 
-# Captured when the ask dialog opens, before the dialog covers the viewport.
+# What the ask dialog is about, from opening it until Send.
 _capture: dict[str, Any] = {}
 
 MCP_SERVER = {
@@ -57,6 +57,8 @@ class TENCIL_OT_ask(bpy.types.Operator):
     click: bpy.props.FloatVectorProperty(size=2, default=(-1, -1), options={"HIDDEN", "SKIP_SAVE"})  # type: ignore[valid-type]
 
     def invoke(self, context: bpy.types.Context, event: bpy.types.Event) -> set[str]:
+        # Only open the dialog here: anything that redraws the window (like taking a
+        # screenshot) can close it again before it shows. The screenshot happens on Send.
         objects = _targets(context)
         if not objects:
             self.report({"WARNING"}, "Select an object first, or pick one with Tencil")
@@ -65,14 +67,8 @@ class TENCIL_OT_ask(bpy.types.Operator):
             self.report({"ERROR"}, _not_ready_reason())
             return {"CANCELLED"}
         area = context.area if context.area and context.area.type == "VIEW_3D" else _find_view3d(context)
-        region = next((r for r in area.regions if r.type == "WINDOW"), None) if area else None
         _capture.clear()
-        _capture.update(
-            objects=[o.name for o in objects],
-            region=region,
-            rv3d=region.data if region else None,
-            screenshot=tencil_context.screenshot(context, area),
-        )
+        _capture.update(objects=[o.name for o in objects], area=area)
         names = ", ".join(o.name for o in objects[:3]) + (f" +{len(objects) - 3}" if len(objects) > 3 else "")
         return context.window_manager.invoke_props_dialog(
             self, width=460, title=f"Ask Tencil about {names}", confirm_text="Send"
@@ -95,10 +91,10 @@ class TENCIL_OT_ask(bpy.types.Operator):
             return {"CANCELLED"}
         point = Vector(self.point) if self.has_point else None
         click = tuple(self.click) if self.click[0] >= 0 else None
-        element, anchor = tencil_context.build(
-            objects, _capture.get("region"), _capture.get("rv3d"), point, click
-        )
-        screenshot = _capture.get("screenshot")
+        area = _capture.get("area") or _find_view3d(context)
+        region = next((r for r in area.regions if r.type == "WINDOW"), None) if area else None
+        element, anchor = tencil_context.build(objects, region, region.data if region else None, point, click)
+        screenshot = tencil_context.screenshot(context, area)
         thread_id = session.create_thread(
             prompt, element, anchor, [screenshot] if screenshot else [], tuple(point) if point else None
         )

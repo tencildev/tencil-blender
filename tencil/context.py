@@ -147,22 +147,43 @@ def build(
 
 
 def screenshot(context: bpy.types.Context, area: bpy.types.Area | None) -> dict[str, Any] | None:
-    """A PNG of the 3D view, scaled down if it's large. None if Blender can't take one."""
-    if not area or not context.window:
+    """A PNG of the 3D view, scaled down if it's large. None if Blender can't make one.
+
+    Rendered offscreen rather than read from the window: no operator runs, so it can't
+    disturb a popup that's open, and the popup isn't in the picture.
+    """
+    region = next((r for r in area.regions if r.type == "WINDOW"), None) if area else None
+    if not region or not region.data or region.width < 2 or region.height < 2:
         return None
     path = os.path.join(tempfile.gettempdir(), "tencil-blender-screenshot.png")
     image = None
     try:
-        region = next((r for r in area.regions if r.type == "WINDOW"), None)
-        with context.temp_override(window=context.window, area=area, region=region):
-            bpy.ops.screen.screenshot_area(filepath=path, check_existing=False)
-        image = bpy.data.images.load(path, check_existing=False)
-        width, height = image.size
+        import gpu
+        import numpy as np
+
+        width, height = region.width, region.height
+        offscreen = gpu.types.GPUOffScreen(width, height)
+        try:
+            offscreen.draw_view3d(
+                context.scene,
+                context.view_layer,
+                area.spaces.active,
+                region,
+                region.data.view_matrix,
+                region.data.window_matrix,
+                do_color_management=True,
+            )
+            pixels = np.asarray(offscreen.texture_color.read(), dtype=np.float32).reshape(-1)
+        finally:
+            offscreen.free()
+        pixels /= 255.0
+        image = bpy.data.images.new("tencil-screenshot", width, height, alpha=True)
+        image.pixels.foreach_set(pixels)
         if width > MAX_SCREENSHOT_WIDTH:
             image.scale(MAX_SCREENSHOT_WIDTH, round(height * MAX_SCREENSHOT_WIDTH / width))
-            image.filepath_raw = path
-            image.file_format = "PNG"
-            image.save()
+        image.filepath_raw = path
+        image.file_format = "PNG"
+        image.save()
         with open(path, "rb") as file:
             data = base64.b64encode(file.read()).decode("ascii")
         return {"name": "viewport.png", "mimeType": "image/png", "dataUrl": "data:image/png;base64," + data}
