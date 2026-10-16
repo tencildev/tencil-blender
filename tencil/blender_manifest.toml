@@ -1,0 +1,18 @@
+schema_version = "1.0.0"
+
+id = "tencil"
+version = "0.1.0"
+name = "Tencil"
+tagline = "Point at an object and tell your coding agent what should change"
+maintainer = "Tencil"
+type = "add-on"
+website = "https://github.com/tencildev/tencil-blender"
+tags = ["3D View", "User Interface"]
+
+blender_version_min = "4.2.0"
+
+license = ["SPDX:Apache-2.0"]
+
+[permissions]
+network = "Talks to the Tencil daemon on this machine"
+files = "Saves viewport screenshots to a temporary file and writes .mcp.json when asked"
