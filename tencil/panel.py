@@ -9,7 +9,7 @@ from typing import Any
 
 import bpy
 
-from . import logo, markers, state
+from . import logo, markdown, markers, state
 from .state import ACTIVE, session
 from .ui import STATUS_ICONS, _draw_step, _not_ready_reason, _wrap, draw_agent_problem
 
@@ -59,6 +59,25 @@ class TENCIL_OT_click_pin(bpy.types.Operator):
         return {"FINISHED"}
 
 
+class TENCIL_OT_copy_reply(bpy.types.Operator):
+    """Copy the agent's last reply, to read it in full"""
+
+    bl_idname = "tencil.copy_reply"
+    bl_label = "Copy Reply"
+    bl_options = {"INTERNAL"}
+
+    thread_id: bpy.props.StringProperty(options={"HIDDEN"})  # type: ignore[valid-type]
+
+    def execute(self, context: bpy.types.Context) -> set[str]:
+        thread = session.threads.get(self.thread_id) or {}
+        reply = next((m for m in reversed(thread.get("messages", [])) if m.get("role") == "assistant"), None)
+        if not reply:
+            return {"CANCELLED"}
+        context.window_manager.clipboard = reply.get("text", "")
+        self.report({"INFO"}, "Copied the reply")
+        return {"FINISHED"}
+
+
 class TENCIL_PT_thread(bpy.types.Panel):
     """One thread, opened from its pin in the viewport."""
 
@@ -76,7 +95,9 @@ class TENCIL_PT_thread(bpy.types.Panel):
         number = session.number_of(thread["id"])
         title = thread.get("title", "")
         layout.label(text=f"{number}  {title}" if number else title, icon_value=logo.icon())
-        _draw_open(layout, thread, text_width=70)
+        # A popup taller than the window doesn't open at all, so the thread has to fit.
+        rows = int(context.window.height / (20 * context.preferences.system.ui_scale))
+        _draw_open(layout, thread, text_width=70, max_lines=max(rows - 14, 12))
 
 
 class TENCIL_PT_window(bpy.types.Panel):
@@ -169,7 +190,9 @@ def _draw_row(layout: bpy.types.UILayout, thread: dict[str, Any], is_open: bool)
         side.label(text=" · ".join(p for p in (_clip(where, 24), when) if p), icon=STATUS_ICONS.get(status, "DOT"))
 
 
-def _draw_open(layout: bpy.types.UILayout, thread: dict[str, Any], text_width: int = TEXT_WIDTH) -> None:
+def _draw_open(
+    layout: bpy.types.UILayout, thread: dict[str, Any], text_width: int = TEXT_WIDTH, max_lines: int | None = None
+) -> None:
     """The whole thread: conversation, what the agent is doing, and what you can do."""
     box = layout.box()
     status = thread.get("status", "idle")
@@ -193,22 +216,45 @@ def _draw_open(layout: bpy.types.UILayout, thread: dict[str, Any], text_width: i
         )
     )
 
-    messages = thread.get("messages", [])
-    if len(messages) > MAX_MESSAGES:
-        box.label(text=f"{len(messages) - MAX_MESSAGES} earlier messages", icon="THREE_DOTS")
-    for message in messages[-MAX_MESSAGES:]:
-        text = (message.get("text") or "").strip()
-        if not text:
-            continue
+    messages = [m for m in thread.get("messages", []) if (m.get("text") or "").strip()]
+    contents = [markdown.lines(m["text"], text_width) for m in messages]
+    # The newest messages that fit; the reply itself is cut short if it alone doesn't.
+    budget = max_lines if max_lines is not None else 10**6
+    if status in ACTIVE:
+        budget -= min(len(thread.get("steps") or []), 8) + 1
+    first = len(messages)
+    cut: int | None = None
+    while first > 0 and len(messages) - first < MAX_MESSAGES:
+        cost = len(contents[first - 1]) + 2
+        if cost > budget:
+            if first == len(messages):
+                cut = max(budget - 3, 4)
+                first -= 1
+            break
+        budget -= cost
+        first -= 1
+    if first:
+        box.label(text=f"{first} earlier message{'s' if first != 1 else ''}", icon="THREE_DOTS")
+    shown = messages[first:]
+    for index, message in enumerate(shown):
         you = message.get("role") == "user"
+        previous = shown[index - 1] if index else None
+        following = shown[index + 1] if index + 1 < len(shown) else None
         column = box.column(align=True)
-        column.label(text="You" if you else "Agent", icon="USER" if you else "LIGHT")
-        lines = column.column(align=True)
-        lines.scale_y = 0.8
-        for line in _wrap(text, text_width):
-            lines.label(text=line)
+        # One header per turn: the agent's notes along the way sit under the same "Agent".
+        if not previous or previous.get("role") != message.get("role"):
+            column.separator(factor=0.5)
+            column.label(text="You" if you else "Agent", icon="USER" if you else "LIGHT")
+        # Those notes are greyed, so the answer at the end of the turn stands out.
+        column.active = you or not following or following.get("role") != message.get("role")
+        content = contents[first + index]
+        if cut is not None and not following:
+            markdown.draw(column, content[:cut])
+            column.label(text=f"… {len(content) - cut} more lines: Copy Reply, or the Tencil panel")
+        else:
+            markdown.draw(column, content)
         if message.get("streaming"):
-            lines.label(text="…")
+            column.label(text="…")
 
     if status in ACTIVE or thread.get("statusDetail"):
         if thread.get("statusDetail"):
@@ -243,6 +289,8 @@ def _draw_open(layout: bpy.types.UILayout, thread: dict[str, Any], text_width: i
     url = (thread.get("provider") or {}).get("url")
     if url:
         actions.operator("tencil.open", text="Open", icon="URL").url = url
+    if any(m.get("role") == "assistant" for m in thread.get("messages", [])):
+        actions.operator("tencil.copy_reply", text="", icon="COPYDOWN").thread_id = thread_id
     delete = actions.operator("tencil.thread_action", text="", icon="TRASH")
     delete.thread_id, delete.action = thread_id, "DELETE"
 
@@ -265,4 +313,4 @@ def _clip(text: str, size: int) -> str:
     return text if len(text) <= size else text[: size - 1] + "…"
 
 
-classes = (TENCIL_OT_select_thread, TENCIL_OT_click_pin, TENCIL_PT_thread, TENCIL_PT_window)
+classes = (TENCIL_OT_select_thread, TENCIL_OT_click_pin, TENCIL_OT_copy_reply, TENCIL_PT_thread, TENCIL_PT_window)

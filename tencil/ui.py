@@ -11,7 +11,7 @@ import bpy
 from mathutils import Vector
 
 from . import context as tencil_context
-from . import logo, state
+from . import logo, markdown, state
 from .state import session
 
 # What the ask dialog is about, from opening it until Send.
@@ -414,7 +414,7 @@ def _draw_activity(layout: bpy.types.UILayout, thread: dict[str, Any], width: in
     reply = next((m for m in reversed(thread.get("messages", [])) if m.get("role") == "assistant"), None)
     turn = state.turn_started(thread) or ""
     if reply and reply.get("text") and (reply.get("streaming") or reply.get("createdAt", "") >= turn):
-        lines = _wrap(reply["text"].strip(), width)
+        lines = _wrap(markdown.plain(reply["text"]).strip(), width)
         text = box.column(align=True)
         text.scale_y = 0.8
         for line in lines[-4:]:
@@ -563,7 +563,7 @@ def _draw_thread(layout: bpy.types.UILayout, number: int, thread: dict[str, Any]
         body.label(text=detail or "Needs your input in the agent's app")
     reply = next((m for m in reversed(thread.get("messages", [])) if m.get("role") == "assistant"), None)
     if reply and reply.get("text") and status not in ("starting", "working"):
-        lines = _wrap(reply["text"].strip(), width)
+        lines = _wrap(markdown.plain(reply["text"]).strip(), width)
         for line in lines[:8]:
             body.label(text=line)
         if len(lines) > 8:
