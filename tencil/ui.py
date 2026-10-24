@@ -77,7 +77,7 @@ class TENCIL_OT_ask(bpy.types.Operator):
 
     def draw(self, context: bpy.types.Context) -> None:
         layout = self.layout
-        layout.label(text=_capture.get("title", "Ask Tencil"), icon_value=logo.icon())
+        _dialog_title(layout, _capture.get("title", "Ask Tencil"))
         layout.activate_init = True
         layout.prop(self, "prompt", text="", placeholder="What should change?")
         problem = session.agent_problem()
@@ -114,6 +114,15 @@ class TENCIL_OT_ask(bpy.types.Operator):
         return {"FINISHED"}
 
 
+def _dialog_title(layout: bpy.types.UILayout, text: str) -> None:
+    """A dialog's title with the logo; Blender's own titles can't have an icon."""
+    # A short row: the dialog already pads its top, and a full-height label doubles it.
+    row = layout.row()
+    row.scale_y = 0.6
+    row.label(text=text, icon_value=logo.icon())
+    layout.separator(factor=0.4)
+
+
 class TENCIL_OT_reply(bpy.types.Operator):
     """Reply in this thread"""
 
@@ -128,7 +137,7 @@ class TENCIL_OT_reply(bpy.types.Operator):
 
     def draw(self, context: bpy.types.Context) -> None:
         title = (session.threads.get(self.thread_id) or {}).get("title", "")
-        self.layout.label(text=f"Reply: {title}" if title else "Reply", icon_value=logo.icon())
+        _dialog_title(self.layout, f"Reply: {title}" if title else "Reply")
         self.layout.activate_init = True
         self.layout.prop(self, "text", text="", placeholder="Reply…")
 
