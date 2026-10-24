@@ -18,6 +18,7 @@ import bpy
 from .client import PROTOCOL_VERSION, Client
 
 ACTIVE = ("starting", "working", "waiting")
+LIVE_FRAME = 1 / 12
 
 HOST = "localhost"
 # Like Tencil's Vite plugin, TENCIL_PORT points at a daemon on another port.
@@ -32,6 +33,8 @@ class Session:
         self.ready = False
         self.project: dict[str, Any] | None = None
         self.provider: dict[str, Any] | None = None
+        # The project's settings: the provider new pins go to, the ones it can pick, the model.
+        self.settings: dict[str, Any] | None = None
         self.threads: dict[str, dict[str, Any]] = {}
         # Where on the object each pin was clicked (object space), for the viewport marker.
         # The daemon doesn't store it, so pins from an earlier session sit on top of the object.
@@ -82,14 +85,16 @@ class Session:
     def _reset(self) -> None:
         self.ready = False
         self.project = None
+        self.settings = None
         self.threads = {}
         self._selected_root = False
 
     def _hello(self) -> dict[str, Any]:
         message: dict[str, Any] = {"type": "hello", "protocol": PROTOCOL_VERSION, "pageUrl": self.page_url}
-        # An unsaved file has no folder: the daemon runs the agent in its scratch folder.
-        if not self.root:
-            message["scratch"] = True
+        # The daemon takes a git checkout's root from hello (Tencil 0.8); for any other
+        # folder, and older daemons, it asks and the add-on answers with project.select.
+        if self.root:
+            message["root"] = self.root
         return message
 
     # ------------------------------------------------------------------ inbound
@@ -102,8 +107,8 @@ class Session:
         for message in messages:
             self._handle(message)
         now = time.monotonic()
-        # 4 a second keeps the pin's pulse moving without busying Blender.
-        if self.active_threads() and now - self._last_live_redraw >= 0.25:
+        # The working pin's light needs ~12 frames a second; more would redraw heavy scenes for little.
+        if self.active_threads() and now - self._last_live_redraw >= LIVE_FRAME:
             self._last_live_redraw = now
             return True
         return bool(messages)
@@ -126,6 +131,7 @@ class Session:
             self.ready = True
             self.project = project
             self.provider = message.get("provider")
+            self.settings = message.get("settings")
             self.threads = {t["id"]: t for t in message.get("threads", [])}
         elif kind == "project.unknown":
             if self.root and not self._selected_root:
@@ -134,6 +140,8 @@ class Session:
                 self.last_error = "Save the file to connect it to a project"
         elif kind == "provider.status":
             self.provider = message.get("provider")
+        elif kind == "settings":
+            self.settings = message.get("settings")
         elif kind == "thread.upsert":
             thread = message["thread"]
             self.threads[thread["id"]] = thread
@@ -196,6 +204,18 @@ class Session:
 
     def number_of(self, thread_id: str) -> int | None:
         return next((n for n, t in self.numbered() if t["id"] == thread_id), None)
+
+    def agent_problem(self) -> str | None:
+        """Why the project's agent can't change the scene, when it's clear it can't."""
+        provider = (self.provider or {}).get("id")
+        model = ((self.settings or {}).get("model") or "").lower()
+        # T3 Code runs Codex unless a Claude model is picked, and Codex doesn't read .mcp.json.
+        if provider == "t3code" and "claude" not in model:
+            return "T3 Code's default agent (Codex) can't use Blender's tools. Use Claude Code."
+        return None
+
+    def can_use_claude_code(self) -> bool:
+        return any(p.get("id") == "claude-code" for p in (self.settings or {}).get("providers", []))
 
     def active_threads(self) -> list[dict[str, Any]]:
         """What the agent is on right now, in this project (any file), oldest first."""

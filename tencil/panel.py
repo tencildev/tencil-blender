@@ -9,9 +9,9 @@ from typing import Any
 
 import bpy
 
-from . import state
+from . import logo, state
 from .state import ACTIVE, session
-from .ui import STATUS_ICONS, _draw_step, _not_ready_reason, _wrap
+from .ui import STATUS_ICONS, _draw_step, _not_ready_reason, _wrap, draw_agent_problem
 
 PANEL_WIDTH = 30  # UI units
 TEXT_WIDTH = 82  # characters that fit on a line at that width, roughly
@@ -45,6 +45,7 @@ class TENCIL_PT_window(bpy.types.Panel):
         _draw_header(layout)
         if not session.ready:
             return
+        draw_agent_problem(layout, TEXT_WIDTH)
 
         actions = layout.row(align=True)
         actions.operator_context = "INVOKE_DEFAULT"
@@ -69,6 +70,8 @@ class TENCIL_PT_window(bpy.types.Panel):
 
 def _draw_header(layout: bpy.types.UILayout) -> None:
     box = layout.box()
+    title = box.row()
+    title.label(text="Tencil", icon_value=logo.icon())
     row = box.row()
     if not session.connected or not session.ready:
         row.label(text=_not_ready_reason(), icon="UNLINKED")
@@ -202,13 +205,14 @@ def draw_header_button(self: Any, context: bpy.types.Context) -> None:
     """Tencil in the 3D view's header: opens the panel, and says when the agent is busy."""
     active = session.active_threads() if session.ready else []
     if not session.connected:
-        text, icon = "Tencil", "UNLINKED"
-    elif active:
-        text, icon = f"Tencil · {len(active)} working", "SORTTIME"
+        self.layout.popover(panel="TENCIL_PT_window", text="Tencil", icon="UNLINKED")
+        return
+    if active:
+        text = f"Tencil · {len(active)} working"
     else:
         count = len([t for t in session.threads.values() if not t.get("resolved")])
-        text, icon = (f"Tencil · {count}" if count else "Tencil"), "OUTLINER_OB_LIGHT"
-    self.layout.popover(panel="TENCIL_PT_window", text=text, icon=icon)
+        text = f"Tencil · {count}" if count else "Tencil"
+    self.layout.popover(panel="TENCIL_PT_window", text=text, icon_value=logo.icon())
 
 
 def _clip(text: str, size: int) -> str:

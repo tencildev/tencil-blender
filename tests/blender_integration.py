@@ -35,8 +35,13 @@ try:
     assert session.page_url.endswith(".blender.invalid/scenes/cube.blend"), session.page_url
     assert os.path.realpath(session.root) == expected_root, (session.root, expected_root)
 
+    assert session._hello()["root"] == session.root
     wait(lambda: session.ready, "ready")
     assert os.path.realpath(session.project["root"]) == expected_root, session.project
+    # Tencil 0.8 takes the git root from hello, so the add-on didn't have to pick the project.
+    assert not session._selected_root
+    # The fake agent is T3 Code with no model picked: Codex, which can't reach Blender's tools.
+    assert session.settings and session.agent_problem(), session.settings
     print("ready:", session.project["name"], "provider:", session.provider["label"], session.provider["state"])
     wait(lambda: (session.provider or {}).get("state") == "ready", "provider ready")
 

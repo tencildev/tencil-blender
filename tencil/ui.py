@@ -11,7 +11,7 @@ import bpy
 from mathutils import Vector
 
 from . import context as tencil_context
-from . import state
+from . import logo, state
 from .state import session
 
 # What the ask dialog is about, from opening it until Send.
@@ -79,6 +79,10 @@ class TENCIL_OT_ask(bpy.types.Operator):
         layout = self.layout
         layout.activate_init = True
         layout.prop(self, "prompt", text="", placeholder="What should change?")
+        problem = session.agent_problem()
+        if problem:
+            for index, line in enumerate(_wrap(problem, 70)):
+                layout.label(text=line, icon="ERROR" if index == 0 else "BLANK1")
 
     def execute(self, context: bpy.types.Context) -> set[str]:
         prompt = self.prompt.strip()
@@ -226,8 +230,21 @@ class TENCIL_OT_reconnect(bpy.types.Operator):
         return {"FINISHED"}
 
 
+class TENCIL_OT_use_claude_code(bpy.types.Operator):
+    """Send this project's new pins to Claude Code, which can use Blender's MCP tools"""
+
+    bl_idname = "tencil.use_claude_code"
+    bl_label = "Use Claude Code"
+
+    def execute(self, context: bpy.types.Context) -> set[str]:
+        if not session.send({"type": "settings.update", "provider": "claude-code"}):
+            self.report({"ERROR"}, _not_ready_reason())
+            return {"CANCELLED"}
+        return {"FINISHED"}
+
+
 class TENCIL_OT_setup_mcp(bpy.types.Operator):
-    """Add Blender's MCP server to this project's .mcp.json, so the agent can work in the open scene"""
+    """Add Blender's MCP server to this project's .mcp.json and approve it for Claude Code, so the agent can work in the open scene"""
 
     bl_idname = "tencil.setup_mcp"
     bl_label = "Add Blender MCP to .mcp.json"
@@ -246,11 +263,31 @@ class TENCIL_OT_setup_mcp(bpy.types.Operator):
                 self.report({"ERROR"}, f"Couldn't read {path}: {error}")
                 return {"CANCELLED"}
         config.setdefault("mcpServers", {})["blender"] = MCP_SERVER
-        with open(path, "w", encoding="utf-8") as file:
-            json.dump(config, file, indent=2)
-            file.write("\n")
+        _write_json(path, config)
+        # Claude Code only starts a project's .mcp.json servers once they're approved.
+        settings_path = os.path.join(session.root, ".claude", "settings.json")
+        settings: dict[str, Any] = {}
+        try:
+            with open(settings_path, encoding="utf-8") as file:
+                settings = json.load(file)
+        except FileNotFoundError:
+            pass
+        except (OSError, ValueError) as error:
+            self.report({"WARNING"}, f"Wrote {path}, but couldn't read {settings_path}: {error}")
+            return {"FINISHED"}
+        approved = settings.setdefault("enabledMcpjsonServers", [])
+        if "blender" not in approved and not settings.get("enableAllProjectMcpServers"):
+            approved.append("blender")
+            os.makedirs(os.path.dirname(settings_path), exist_ok=True)
+            _write_json(settings_path, settings)
         self.report({"INFO"}, f"Wrote {path}")
         return {"FINISHED"}
+
+
+def _write_json(path: str, value: Any) -> None:
+    with open(path, "w", encoding="utf-8") as file:
+        json.dump(value, file, indent=2)
+        file.write("\n")
 
 
 class TENCIL_PT_panel(bpy.types.Panel):
@@ -258,6 +295,9 @@ class TENCIL_PT_panel(bpy.types.Panel):
     bl_region_type = "UI"
     bl_category = "Tencil"
     bl_label = "Tencil"
+
+    def draw_header(self, context: bpy.types.Context) -> None:
+        self.layout.label(text="", icon_value=logo.icon())
 
     def draw(self, context: bpy.types.Context) -> None:
         layout = self.layout
@@ -422,11 +462,15 @@ def draw_statusbar(self: Any, context: bpy.types.Context) -> None:
         text, icon = "Tencil is waiting for you", "QUESTION"
     else:
         what = step.get("label") if step and step.get("status") == "running" else "working"
-        text, icon = f"Tencil: {what}", "SORTTIME"
+        text, icon = f"Tencil: {what}", None
     if len(active) > 1:
         text += f" (+{len(active) - 1})"
     since = state.elapsed(state.turn_started(thread))
-    self.layout.label(text=f"{text} · {since}" if since else text, icon=icon)
+    text = f"{text} · {since}" if since else text
+    if icon:
+        self.layout.label(text=text, icon=icon)
+    else:
+        self.layout.label(text=text, icon_value=logo.icon())
 
 
 def _draw_status(layout: bpy.types.UILayout) -> None:
@@ -438,6 +482,11 @@ def _draw_status(layout: bpy.types.UILayout) -> None:
         box.operator("tencil.reconnect", icon="FILE_REFRESH")
         return
     if not session.ready:
+        if not session.root:
+            box.label(text="Save the file in a project folder", icon="FILE_TICK")
+            for line in textwrap.wrap("Tencil works in the folder (or git repository) the .blend is in.", 40):
+                box.label(text=line)
+            return
         box.label(text="Connecting to the project…", icon="SORTTIME")
         return
     project = session.project or {}
@@ -451,10 +500,23 @@ def _draw_status(layout: bpy.types.UILayout) -> None:
     if state != "ready" and provider.get("detail"):
         for line in textwrap.wrap(provider["detail"], 40):
             box.label(text=line)
-    if not session.root:
-        box.label(text="Unsaved file: the agent works in a scratch folder", icon="INFO")
     if session.last_error:
         box.label(text=session.last_error, icon="ERROR")
+    draw_agent_problem(layout, 40)
+
+
+def draw_agent_problem(layout: bpy.types.UILayout, width: int) -> None:
+    """When the project's agent can't change the scene: why, and the fix."""
+    problem = session.agent_problem()
+    if not problem:
+        return
+    box = layout.box()
+    text = box.column(align=True)
+    text.alert = True
+    for index, line in enumerate(_wrap(problem, width)):
+        text.label(text=line, icon="ERROR" if index == 0 else "BLANK1")
+    if session.can_use_claude_code():
+        box.operator("tencil.use_claude_code", icon_value=logo.icon())
 
 
 def _draw_setup(layout: bpy.types.UILayout) -> None:
@@ -552,7 +614,7 @@ def menu_entry(self: Any, context: bpy.types.Context) -> None:
     layout.separator()
     # The object menus end in EXEC_REGION_WIN, which would skip the dialog (and the picker).
     layout.operator_context = "INVOKE_REGION_WIN"
-    layout.operator("tencil.ask", icon="OUTLINER_OB_MESH")
+    layout.operator("tencil.ask", icon_value=logo.icon())
     layout.operator("tencil.pick", icon="EYEDROPPER")
 
 
@@ -563,6 +625,7 @@ classes = (
     TENCIL_OT_focus,
     TENCIL_OT_open,
     TENCIL_OT_reconnect,
+    TENCIL_OT_use_claude_code,
     TENCIL_OT_setup_mcp,
     TENCIL_PT_panel,
     TENCIL_PT_working,

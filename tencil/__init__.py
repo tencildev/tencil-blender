@@ -3,13 +3,19 @@ agent does it in the open scene (through Blender Lab's MCP server)."""
 
 from __future__ import annotations
 
+import time
+
 import bpy
 from bpy.app.handlers import persistent
 
-from . import markers, panel, picker, ui
-from .state import DEFAULT_PORT, session
+from . import logo, markers, panel, picker, ui
+from .state import DEFAULT_PORT, LIVE_FRAME, session
 
 TICK_SECONDS = 0.2
+# The status bar shows elapsed seconds; it needn't redraw with every frame of the pin.
+STATUS_SECONDS = 1.0
+
+_last_status = 0.0
 
 _keymaps: list[tuple[bpy.types.KeyMap, bpy.types.KeyMapItem]] = []
 
@@ -36,16 +42,21 @@ def _port() -> int:
 
 
 def _tick() -> float:
+    global _last_status
     if session.tick():
+        now = time.monotonic()
+        status = now - _last_status >= STATUS_SECONDS
+        if status:
+            _last_status = now
         for window in bpy.context.window_manager.windows:
             for area in window.screen.areas:
                 if area.type == "VIEW_3D":
                     area.tag_redraw()
             # The status bar is a global area, outside screen.areas. Clearing the status
             # text redraws it, but a running modal tool keeps its hints there, so not then.
-            if not window.modal_operators:
+            if status and not window.modal_operators:
                 window.workspace.status_text_set_internal(None)
-    return TICK_SECONDS
+    return LIVE_FRAME if session.active_threads() else TICK_SECONDS
 
 
 @persistent
@@ -62,6 +73,7 @@ classes = (TencilPreferences, picker.TENCIL_OT_pick, *ui.classes, *panel.classes
 
 
 def register() -> None:
+    logo.register()
     for cls in classes:
         bpy.utils.register_class(cls)
     bpy.types.WindowManager.tencil_show_resolved = bpy.props.BoolProperty(
@@ -111,3 +123,4 @@ def unregister() -> None:
     del bpy.types.WindowManager.tencil_open_thread
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)
+    logo.unregister()
