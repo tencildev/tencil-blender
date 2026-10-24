@@ -71,12 +71,13 @@ class TENCIL_OT_ask(bpy.types.Operator):
         _capture.clear()
         _capture.update(objects=[o.name for o in objects], area=area)
         names = ", ".join(o.name for o in objects[:3]) + (f" +{len(objects) - 3}" if len(objects) > 3 else "")
-        return context.window_manager.invoke_props_dialog(
-            self, width=460, title=f"Ask Tencil about {names}", confirm_text="Send"
-        )
+        _capture["title"] = f"Ask Tencil about {names}"
+        # Dialog titles can't have an icon, so the title is drawn with the logo instead.
+        return context.window_manager.invoke_props_dialog(self, width=460, title="", confirm_text="Send")
 
     def draw(self, context: bpy.types.Context) -> None:
         layout = self.layout
+        layout.label(text=_capture.get("title", "Ask Tencil"), icon_value=logo.icon())
         layout.activate_init = True
         layout.prop(self, "prompt", text="", placeholder="What should change?")
         problem = session.agent_problem()
@@ -123,9 +124,11 @@ class TENCIL_OT_reply(bpy.types.Operator):
     text: bpy.props.StringProperty(name="Reply", options={"SKIP_SAVE"})  # type: ignore[valid-type]
 
     def invoke(self, context: bpy.types.Context, event: bpy.types.Event) -> set[str]:
-        return context.window_manager.invoke_props_dialog(self, width=460, confirm_text="Send")
+        return context.window_manager.invoke_props_dialog(self, width=460, title="", confirm_text="Send")
 
     def draw(self, context: bpy.types.Context) -> None:
+        title = (session.threads.get(self.thread_id) or {}).get("title", "")
+        self.layout.label(text=f"Reply: {title}" if title else "Reply", icon_value=logo.icon())
         self.layout.activate_init = True
         self.layout.prop(self, "text", text="", placeholder="Reply…")
 
