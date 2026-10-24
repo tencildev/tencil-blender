@@ -48,7 +48,8 @@ You need Blender 5.1 or newer (for Blender Lab's MCP add-on),
 
 Pins show up on the objects like Tencil's pins in the browser: blue while the agent
 works (with a light running round the edge and what it's doing next to it), amber when
-it waits for you, green when it's done, red when it failed. The **Tencil** button in the
+it waits for you, green when it's done, red when it failed. Click a pin to open its
+thread (the conversation, steps, Reply / Stop / Resolve) right there. The **Tencil** button in the
 3D view's header (or **Alt+Shift+T**) opens the Tencil panel: every thread in the
 project, what's working on top; open one for the whole conversation, the agent's steps,
 and Reply / Stop / Resolve / Show / Open in agent / Delete. While the agent works, its

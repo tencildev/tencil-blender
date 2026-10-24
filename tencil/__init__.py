@@ -91,6 +91,9 @@ def register() -> None:
         keymap = keyconfig.keymaps.new(name="3D View", space_type="VIEW_3D")
         item = keymap.keymap_items.new("tencil.pick", "T", "PRESS", alt=True)
         _keymaps.append((keymap, item))
+        # A click on a pin opens its thread; elsewhere the operator passes the click on.
+        item = keymap.keymap_items.new("tencil.click_pin", "LEFTMOUSE", "PRESS")
+        _keymaps.append((keymap, item))
         item = keymap.keymap_items.new("wm.call_panel", "T", "PRESS", alt=True, shift=True)
         item.properties.name = "TENCIL_PT_window"
         item.properties.keep_open = True

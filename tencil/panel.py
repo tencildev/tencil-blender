@@ -9,7 +9,7 @@ from typing import Any
 
 import bpy
 
-from . import logo, state
+from . import logo, markers, state
 from .state import ACTIVE, session
 from .ui import STATUS_ICONS, _draw_step, _not_ready_reason, _wrap, draw_agent_problem
 
@@ -31,6 +31,52 @@ class TENCIL_OT_select_thread(bpy.types.Operator):
         wm = context.window_manager
         wm.tencil_open_thread = "" if wm.tencil_open_thread == self.thread_id else self.thread_id
         return {"FINISHED"}
+
+
+class TENCIL_OT_click_pin(bpy.types.Operator):
+    """Open the thread of the pin under the mouse; anywhere else the click selects as usual"""
+
+    bl_idname = "tencil.click_pin"
+    bl_label = "Open Pin"
+    bl_options = {"INTERNAL"}
+
+    def invoke(self, context: bpy.types.Context, event: bpy.types.Event) -> set[str]:
+        region = context.region
+        if not region or region.type != "WINDOW":
+            return {"PASS_THROUGH"}
+        thread_id = markers.pin_at(region, event.mouse_region_x, event.mouse_region_y)
+        if not thread_id or thread_id not in session.threads:
+            return {"PASS_THROUGH"}
+        context.window_manager.tencil_open_thread = thread_id
+        # Opened on the press, the popup would close again on the release; open it just after.
+        window, area = context.window, context.area
+
+        def open_popup() -> None:
+            with bpy.context.temp_override(window=window, area=area, region=region):
+                bpy.ops.wm.call_panel(name="TENCIL_PT_thread", keep_open=True)
+
+        bpy.app.timers.register(open_popup, first_interval=0.05)
+        return {"FINISHED"}
+
+
+class TENCIL_PT_thread(bpy.types.Panel):
+    """One thread, opened from its pin in the viewport."""
+
+    bl_space_type = "VIEW_3D"
+    bl_region_type = "HEADER"
+    bl_label = "Tencil Thread"
+    bl_ui_units_x = 26
+
+    def draw(self, context: bpy.types.Context) -> None:
+        layout = self.layout
+        thread = session.threads.get(context.window_manager.tencil_open_thread)
+        if not thread:
+            layout.label(text="This pin is gone", icon="INFO")
+            return
+        number = session.number_of(thread["id"])
+        title = thread.get("title", "")
+        layout.label(text=f"{number}  {title}" if number else title, icon_value=logo.icon())
+        _draw_open(layout, thread, text_width=70)
 
 
 class TENCIL_PT_window(bpy.types.Panel):
@@ -123,7 +169,7 @@ def _draw_row(layout: bpy.types.UILayout, thread: dict[str, Any], is_open: bool)
         side.label(text=" · ".join(p for p in (_clip(where, 24), when) if p), icon=STATUS_ICONS.get(status, "DOT"))
 
 
-def _draw_open(layout: bpy.types.UILayout, thread: dict[str, Any]) -> None:
+def _draw_open(layout: bpy.types.UILayout, thread: dict[str, Any], text_width: int = TEXT_WIDTH) -> None:
     """The whole thread: conversation, what the agent is doing, and what you can do."""
     box = layout.box()
     status = thread.get("status", "idle")
@@ -159,14 +205,14 @@ def _draw_open(layout: bpy.types.UILayout, thread: dict[str, Any]) -> None:
         column.label(text="You" if you else "Agent", icon="USER" if you else "LIGHT")
         lines = column.column(align=True)
         lines.scale_y = 0.8
-        for line in _wrap(text, TEXT_WIDTH):
+        for line in _wrap(text, text_width):
             lines.label(text=line)
         if message.get("streaming"):
             lines.label(text="…")
 
     if status in ACTIVE or thread.get("statusDetail"):
         if thread.get("statusDetail"):
-            for line in _wrap(thread["statusDetail"], TEXT_WIDTH)[:3]:
+            for line in _wrap(thread["statusDetail"], text_width)[:3]:
                 box.label(text=line, icon="ERROR" if status == "error" else "INFO")
     steps = thread.get("steps") or []
     if steps:
@@ -174,10 +220,10 @@ def _draw_open(layout: bpy.types.UILayout, thread: dict[str, Any]) -> None:
         column.label(text="Steps", icon="SORTTIME" if status in ACTIVE else "CHECKMARK")
         top = [s for s in steps if not s.get("parentId")]
         for step in top[-8:]:
-            _draw_step(column, step, TEXT_WIDTH, 0)
+            _draw_step(column, step, text_width, 0)
             if step.get("status") == "running":
                 for child in [s for s in steps if s.get("parentId") == step["id"]][-3:]:
-                    _draw_step(column, child, TEXT_WIDTH, 1)
+                    _draw_step(column, child, text_width, 1)
 
     thread_id = thread["id"]
     actions = box.row(align=True)
@@ -219,4 +265,4 @@ def _clip(text: str, size: int) -> str:
     return text if len(text) <= size else text[: size - 1] + "…"
 
 
-classes = (TENCIL_OT_select_thread, TENCIL_PT_window)
+classes = (TENCIL_OT_select_thread, TENCIL_OT_click_pin, TENCIL_PT_thread, TENCIL_PT_window)

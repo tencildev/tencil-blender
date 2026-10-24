@@ -38,12 +38,26 @@ CORNER_STEPS = 8
 LAP = 2.0
 
 _handle = None
+# Where each pin was drawn, per viewport region, so a click can find it: (x0, y0, x1, y1, thread id).
+hits: dict[int, list[tuple[float, float, float, float, str]]] = {}
+
+
+def pin_at(region: bpy.types.Region, x: float, y: float) -> str | None:
+    """The thread whose pin is under (x, y) in region coordinates; the topmost wins."""
+    for x0, y0, x1, y1, thread_id in reversed(hits.get(region.as_pointer(), [])):
+        if x0 <= x <= x1 and y0 <= y <= y1:
+            return thread_id
+    return None
 
 
 def draw() -> None:
     context = bpy.context
     region, rv3d = context.region, context.region_data
-    if not region or not rv3d or not session.ready:
+    if not region or not rv3d:
+        return
+    drawn: list[tuple[float, float, float, float, str]] = []
+    hits[region.as_pointer()] = drawn
+    if not session.ready:
         return
     scale = context.preferences.system.ui_scale
     for number, thread in session.numbered():
@@ -62,10 +76,11 @@ def draw() -> None:
         screen = view3d_utils.location_3d_to_region_2d(region, rv3d, world)
         if screen is None:
             continue
-        _pin(screen, str(number), thread, scale)
+        drawn.append((*_pin(screen, str(number), thread, scale), thread["id"]))
 
 
-def _pin(spot: Vector, label: str, thread: dict, scale: float) -> None:
+def _pin(spot: Vector, label: str, thread: dict, scale: float) -> tuple[float, float, float, float]:
+    """Draws the pin; returns the rectangle a click on it lands in."""
     status = thread.get("status", "idle")
     color = COLORS.get(status, COLORS["idle"])
     working = status in ("starting", "working")
@@ -100,12 +115,14 @@ def _pin(spot: Vector, label: str, thread: dict, scale: float) -> None:
     blf.position(font, x + (width - text_width) / 2, y + (height - text_height) / 2 + scale, 0)
     blf.draw(font, label)
 
+    right = x + width + rim
     if status in ACTIVE:
-        _activity_label(thread, Vector((x + width + rim, y + height / 2)), scale)
+        right = _activity_label(thread, Vector((x + width + rim, y + height / 2)), scale)
+    return (x - rim, y - rim, right, y + height + rim)
 
 
-def _activity_label(thread: dict, left_middle: Vector, scale: float) -> None:
-    """What the agent is doing, next to its pin."""
+def _activity_label(thread: dict, left_middle: Vector, scale: float) -> float:
+    """What the agent is doing, next to its pin. Returns where it ends on the right."""
     if thread.get("status") == "waiting":
         text = "Waiting for you"
     else:
@@ -124,6 +141,7 @@ def _activity_label(thread: dict, left_middle: Vector, scale: float) -> None:
     blf.color(font, 1, 1, 1, 0.95)
     blf.position(font, x + pad_x, y + pad_y + scale, 0)
     blf.draw(font, text)
+    return x + width + 2 * pad_x
 
 
 def _outline(x: float, y: float, width: float, height: float, radii: tuple[float, ...]) -> list[tuple[float, float]]:
@@ -194,3 +212,4 @@ def unregister() -> None:
     if _handle is not None:
         bpy.types.SpaceView3D.draw_handler_remove(_handle, "WINDOW")
     _handle = None
+    hits.clear()
