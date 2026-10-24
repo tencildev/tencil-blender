@@ -92,7 +92,7 @@ current step also shows in the status bar and in the sidebar's Tencil tab.
 
 Symlink `tencil/` into Blender's extensions folder
 (`~/Library/Application Support/Blender/<version>/extensions/user_default/` on macOS)
-and restart Blender. `blender --command extension build --source-dir tencil --output-dir dist`
+and restart Blender. `mkdir -p dist && blender --command extension build --source-dir tencil --output-dir dist`
 builds the zip.
 
 `tests/integration.sh` runs the add-on headless against a real daemon from a Tencil
